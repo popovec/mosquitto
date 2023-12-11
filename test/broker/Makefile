@@ -236,5 +236,6 @@ ifeq ($(WITH_CJSON),yes)
 	./14-dynsec-plugin-invalid.py
 	./14-dynsec-role.py
 	./14-dynsec-role-invalid.py
+	./14-dynsec-client-self-password.py
 endif
 endif

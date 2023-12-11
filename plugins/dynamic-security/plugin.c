@@ -249,10 +249,12 @@ void dynsec__command_reply(cJSON *j_responses, struct mosquitto *context, const 
 }
 
 
-static void send_response(cJSON *tree)
+static void send_response(cJSON *tree, const char *topic)
 {
 	char *payload;
 	size_t payload_len;
+	char *rtopic;
+
 
 	payload = cJSON_PrintUnformatted(tree);
 	cJSON_Delete(tree);
@@ -263,8 +265,15 @@ static void send_response(cJSON *tree)
 		free(payload);
 		return;
 	}
-	mosquitto_broker_publish(NULL, "$CONTROL/dynamic-security/v1/response",
+
+	if(NULL == (rtopic = mosquitto_malloc(strlen(topic) + strlen("/response") + 1)))
+		return;
+	strcpy(rtopic, topic);
+	strcat(rtopic,"/response");
+
+	mosquitto_broker_publish(NULL, rtopic,
 			(int)payload_len, payload, 0, 0, NULL);
+	free(rtopic);
 }
 
 
@@ -301,22 +310,25 @@ static int dynsec_control_callback(int event, void *event_data, void *userdata)
 #endif
 	if(tree == NULL){
 		dynsec__command_reply(j_responses, ed->client, "Unknown command", "Payload not valid JSON", NULL);
-		send_response(j_response_tree);
+		send_response(j_response_tree, ed->topic);
 		return MOSQ_ERR_SUCCESS;
 	}
 	commands = cJSON_GetObjectItem(tree, "commands");
 	if(commands == NULL || !cJSON_IsArray(commands)){
 		cJSON_Delete(tree);
 		dynsec__command_reply(j_responses, ed->client, "Unknown command", "Invalid/missing commands", NULL);
-		send_response(j_response_tree);
+		send_response(j_response_tree, ed->topic);
 		return MOSQ_ERR_SUCCESS;
 	}
 
 	/* Handle commands */
-	dynsec__handle_control(j_responses, ed->client, commands);
+	if(strcmp(ed->topic, "$CONTROL/dynamic-security/v1") == 0)
+		dynsec__handle_control(j_responses, ed->client, commands);
+	else if (strcmp(ed->topic, "$CONTROL/dynamic-security/self/v1") == 0)
+		dynsec__handle_control_self(j_responses, ed->client, commands);
 	cJSON_Delete(tree);
 
-	send_response(j_response_tree);
+	send_response(j_response_tree, ed->topic);
 
 	return MOSQ_ERR_SUCCESS;
 }
@@ -677,6 +689,18 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, s
 		goto error;
 	}
 
+	rc = mosquitto_callback_register(plg_id, MOSQ_EVT_CONTROL, dynsec_control_callback, "$CONTROL/dynamic-security/self/v1", NULL);
+	if(rc == MOSQ_ERR_ALREADY_EXISTS){
+		mosquitto_log_printf(MOSQ_LOG_ERR, "Error: Dynamic security plugin can currently only be loaded once.");
+		mosquitto_log_printf(MOSQ_LOG_ERR, "Note that this was previously incorrectly allowed but could cause problems with duplicate entries in the config.");
+		goto error;
+	}else if(rc == MOSQ_ERR_NOMEM){
+		mosquitto_log_printf(MOSQ_LOG_ERR, "Error: Out of memory.");
+		goto error;
+	}else if(rc != MOSQ_ERR_SUCCESS){
+		goto error;
+	}
+
 	rc = mosquitto_callback_register(plg_id, MOSQ_EVT_BASIC_AUTH, dynsec_auth__basic_auth_callback, NULL, NULL);
 	if(rc == MOSQ_ERR_ALREADY_EXISTS){
 		mosquitto_log_printf(MOSQ_LOG_ERR, "Error: Dynamic security plugin can only be loaded once.");
@@ -714,6 +738,7 @@ int mosquitto_plugin_cleanup(void *user_data, struct mosquitto_opt *options, int
 
 	if(plg_id){
 		mosquitto_callback_unregister(plg_id, MOSQ_EVT_CONTROL, dynsec_control_callback, "$CONTROL/dynamic-security/v1");
+		mosquitto_callback_unregister(plg_id, MOSQ_EVT_CONTROL, dynsec_control_callback, "$CONTROL/dynamic-security/self/v1");
 		mosquitto_callback_unregister(plg_id, MOSQ_EVT_BASIC_AUTH, dynsec_auth__basic_auth_callback, NULL);
 		mosquitto_callback_unregister(plg_id, MOSQ_EVT_ACL_CHECK, dynsec__acl_check_callback, NULL);
 	}
@@ -816,6 +841,53 @@ int dynsec__handle_control(cJSON *j_responses, struct mosquitto *context, cJSON 
 					rc = dynsec_roles__process_add_acl(j_responses, context, aiter, correlation_data);
 				}else if(!strcasecmp(command, "removeRoleACL")){
 					rc = dynsec_roles__process_remove_acl(j_responses, context, aiter, correlation_data);
+
+				/* Unknown */
+				}else{
+					dynsec__command_reply(j_responses, context, command, "Unknown command", correlation_data);
+					rc = MOSQ_ERR_INVAL;
+				}
+			}else{
+				dynsec__command_reply(j_responses, context, "Unknown command", "Missing command", correlation_data);
+				rc = MOSQ_ERR_INVAL;
+			}
+		}else{
+			dynsec__command_reply(j_responses, context, "Unknown command", "Command not an object", correlation_data);
+			rc = MOSQ_ERR_INVAL;
+		}
+	}
+
+	return rc;
+}
+
+/* ################################################################
+ * #
+ * # $CONTROL/dynamic-security/self/v1 handler
+ * #
+ * ################################################################ */
+
+int dynsec__handle_control_self(cJSON *j_responses, struct mosquitto *context, cJSON *commands)
+{
+	int rc = MOSQ_ERR_SUCCESS;
+	cJSON *aiter;
+	char *command;
+	char *correlation_data = NULL;
+
+	cJSON_ArrayForEach(aiter, commands){
+		if(cJSON_IsObject(aiter)){
+			if(json_get_string(aiter, "command", &command, false) == MOSQ_ERR_SUCCESS){
+				if(json_get_string(aiter, "correlationData", &correlation_data, true) != MOSQ_ERR_SUCCESS){
+					dynsec__command_reply(j_responses, context, command, "Invalid correlationData data type.", NULL);
+					return MOSQ_ERR_INVAL;
+				}
+
+				/* Plugin */
+				if(!strcasecmp(command, "getDefaultACLAccess")){
+					rc = dynsec__process_get_default_acl_access(j_responses, context, aiter, correlation_data);
+
+				/* Clients */
+				}else if(!strcasecmp(command, "setSelfPassword")){
+					rc = dynsec_clients__process_set_self_password(j_responses, context, aiter, correlation_data);
 
 				/* Unknown */
 				}else{

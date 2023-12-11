@@ -700,6 +700,44 @@ int dynsec_clients__process_set_password(cJSON *j_responses, struct mosquitto *c
 	return rc;
 }
 
+int dynsec_clients__process_set_self_password(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data)
+{
+	char *password;
+	struct dynsec__client *client;
+	int rc;
+	const char *username;
+
+	username = mosquitto_client_username(context);
+
+	if(json_get_string(command, "password", &password, false) != MOSQ_ERR_SUCCESS){
+		dynsec__command_reply(j_responses, context, "setSelfPassword", "Invalid/missing password", correlation_data);
+		return MOSQ_ERR_INVAL;
+	}
+	if(strlen(password) == 0){
+		dynsec__command_reply(j_responses, context, "setSelfPassword", "Empty password is not allowed", correlation_data);
+		return MOSQ_ERR_INVAL;
+	}
+
+	client = dynsec_clients__find(username);
+	if(client == NULL){
+		dynsec__command_reply(j_responses, context, "setSelfPassword", "Client not found", correlation_data);
+		return MOSQ_ERR_SUCCESS;
+	}
+	rc = client__set_password(client, password);
+	if(rc == MOSQ_ERR_SUCCESS){
+		dynsec__config_save();
+		dynsec__command_reply(j_responses, context, "setSelfPassword", NULL, correlation_data);
+
+		/* Do not kick this user, this user is waiting for response */
+		/* mosquitto_kick_client_by_username(username, false); */
+
+		mosquitto_log_printf(MOSQ_LOG_INFO, "dynsec: setSelfPassword | username=%s | password=******",
+				username);
+	}else{
+		dynsec__command_reply(j_responses, context, "setSelfPassword", "Internal error", correlation_data);
+	}
+	return rc;
+}
 
 static void client__add_new_roles(struct dynsec__client *client, struct dynsec__rolelist *base_rolelist)
 {

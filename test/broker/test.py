@@ -199,6 +199,7 @@ tests = [
     (1, './14-dynsec-plugin-invalid.py'),
     (1, './14-dynsec-role.py'),
     (1, './14-dynsec-role-invalid.py'),
+    (1, './14-dynsec-client-self-password.py'),
     ]
 
 ptest.run_tests(tests)

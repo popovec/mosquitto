@@ -687,3 +687,20 @@ mosquitto_ctrl <options> dynsec listRoles
 
 The `modifyRole` command also exists in the topic API, but is not currently
 available in `mosquitto_ctrl`.
+
+## Password change
+
+The user can change the password assigned to him by the administrator.
+
+Changing the password is done using the MQTT API using the topic
+`$CONTROL/dynamic-security/self/#`.  The user can change the password using
+a message sent to this topic, for example:
+
+`{"commands": [{"command":"setSelfPassword", "password":"new_pass"}]}`
+
+The prerequisite is the correct ACL setting so that the user has access to
+this topic.
+
+
+Examples of ACL settings and the use of the dynamic-security module are
+available in the mosquitto source code, in the `tests/broker` directory.

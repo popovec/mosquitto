@@ -140,6 +140,7 @@ extern struct dynsec__acl_default_access default_access;
 void dynsec__config_save(void);
 int dynsec__handle_control(cJSON *j_responses, struct mosquitto *context, cJSON *commands);
 void dynsec__command_reply(cJSON *j_responses, struct mosquitto *context, const char *command, const char *error, const char *correlation_data);
+int dynsec__handle_control_self(cJSON *j_responses, struct mosquitto *context, cJSON *commands);
 
 
 /* ################################################################
@@ -184,6 +185,7 @@ int dynsec_clients__process_modify(cJSON *j_responses, struct mosquitto *context
 int dynsec_clients__process_remove_role(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data);
 int dynsec_clients__process_set_id(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data);
 int dynsec_clients__process_set_password(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data);
+int dynsec_clients__process_set_self_password(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data);
 struct dynsec__client *dynsec_clients__find(const char *username);
 
 
